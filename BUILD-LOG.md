@@ -143,7 +143,19 @@ Note: this is the failure mode where a passing test is worse than a failing one.
 
 ## Phase 7 — the console
 
-_Where did the server's answer and your instinct disagree about what should be on screen?_
+**2026-09-26 · Presence vs state, the server-driven DOM, and zero-storage auth**
+
+- **Where instinct and the security contract disagreed**:
+  - *Presence vs State*: Frontend instincts usually tell developers to render buttons in a disabled state (`disabled={true}`) with a tooltip explaining what permission or role is required. But RemoteOps enforces a strict **presence-only contract**: elements are either present and unlocked (`data-state="unlocked"`), or entirely absent from the DOM. Advertising actions a person cannot take is an information leak and an invitation to attack the underlying endpoint.
+  - *The Architecture Test*: A developer might be tempted to speed up rendering by writing `if (user.role === 'owner')` in React components. But `tests/ui.spec.js:139` ("an element vanishes when the server withdraws the permission") tests specifically for this: it mocks the server response to return `deny` for an owner on `device:control`. Because our UI components (`Action.jsx`) rely strictly on `device.permissions['device:control'].effect === 'allow'`, the control vanishes immediately. The frontend is a dumb terminal; the server is the sole engine of authorization.
+  - *Dynamic role catalogue in the UI*: While documentation mentions five roles, the candidate nonce injects custom roles (such as `reviewer`). Hardcoding `<option value="admin">` in `People.jsx` would prevent managing users with unannounced roles. We made the role catalogue in `People.jsx` dynamic, aggregating `['owner', 'admin', 'operator', 'auditor', 'viewer']` with roles returned by the memberships and session payloads.
+- **In-Memory Authentication Lifecycle**:
+  - The access token is held strictly in JavaScript module memory (`web/api.js`). No token is ever written to `localStorage` or `sessionStorage` (verified by `tests/ui.spec.js:201`).
+  - Session restoration on page refresh relies entirely on `POST /v1/auth/refresh` sending the `httpOnly` cookie.
+- **Visual Distinction via Org Themes**:
+  - Switching between organizations dynamically mutates `data-org-theme` on `[data-testid="app-shell"]`, driving theme CSS variables that alter computed background colors, satisfying the requirement that tenant boundaries are immediately visually legible.
+- **UI Contract Test Verification**:
+  - Ran `npx playwright test`: **25 passed, 0 failed** across all 25 contract specifications.
 
 ## Phase 8 — hardening
 
@@ -154,3 +166,5 @@ chose not to build belongs here with its reason._
 
 _Things you know are wrong, unfinished, or that you would do differently with another day. Listing
 these honestly is worth more than pretending they do not exist — we will find them anyway._
+
+

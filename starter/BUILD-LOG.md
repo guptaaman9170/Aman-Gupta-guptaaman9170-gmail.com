@@ -76,8 +76,19 @@ Note: this is the failure mode where a passing test is worse than a failing one.
 
 ## Phase 3 — orgs, members, invites
 
-_Anything you had to work out that no document states. Invite lifecycle states are a common
-source of this._
+**2026-09-26 · Lifecycle management, membership constraints, and re-invitation semantics**
+
+- **The Removed Membership Constraint Trap (A1)**:
+  - *Observation*: In `db/schema.sql`, the `memberships` table has a strict `UNIQUE(org_id, user_id)` constraint. Users are never deleted (`users` table has no `deleted_at`). When a member is removed (`DELETE /v1/orgs/:org/members/:userId`), the system sets `memberships.status = 'removed'`.
+  - *The failure mode*: If a previously removed user is invited back to the organization and accepts the invite, a standard `INSERT INTO memberships (id, org_id, user_id, ...)` fails with `SQLITE_CONSTRAINT: UNIQUE constraint failed: memberships.org_id, memberships.user_id`, raising a 500 error on the accept route.
+  - *The fix*: In `routes/invites.js`, when accepting an invite, we check whether a membership row already exists for `(invite.org_id, user.id)`. If an existing row is found in `removed` (or `invited`) status, we execute an `UPDATE memberships SET status='active', role=?, joined_at=? WHERE id=?` and bump `perm_version`, rather than attempting an `INSERT`.
+- **Atomic Single-Use Invite Claims Leaning on Database Invariants (B5)**:
+  - Invite redemption runs inside an atomic transaction with `UPDATE invites SET accepted_at = ?, accepted_by = ? WHERE id = ? AND accepted_at IS NULL AND revoked_at IS NULL`.
+  - We rely on `claim.changes === 1` to prevent race conditions during concurrent accept attempts. If two concurrent requests attempt to redeem the same invite token, SQLite's serialization guarantees exactly one succeeds, while the other sees `changes === 0` and throws `409 CONFLICT`. The partial unique index `one_live_invite_per_email` guarantees uniqueness at rest.
+- **Last Owner Protection and Role Ranking (D8)**:
+  - Implemented `assertNotLastOwner` in `server/lifecycle.js`: counts active owners (`status = 'active'`). If count is 1 or fewer, demotion, suspension, removal, or self-leaving throws `409 LAST_OWNER`.
+  - Implemented `assertCanModify`: `callerRole === 'owner'` can modify anyone (including peer owners); other roles can only modify targets strictly lower in `roles.rank`. Non-owners cannot assign or invite an owner (`403 cannot_confer_owner`).
+  - Route ordering: registered `/v1/orgs/:org/members/me` before `/v1/orgs/:org/members/:userId` to prevent the parameterized route from capturing the literal string `'me'`.
 
 ## Phase 4 — devices and grants
 

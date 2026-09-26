@@ -38,6 +38,15 @@ Rules, from `DISCOVERY-BRIEF.md`:
 
 ---
 
+### Re-inviting a removed member updates the existing membership row rather than inserting
+
+**What I chose:** In `routes/invites.js`, when an invite is accepted, check if a membership record already exists for `(org_id, user_id)`. If present (whether in `invited` or `removed` status), perform an `UPDATE memberships SET status='active', role=?, joined_at=? WHERE id=?` and bump `perm_version`, instead of an `INSERT`.
+**Why:** The SQLite schema enforces `UNIQUE(org_id, user_id)` on `memberships`, while user rows are never deleted (`users` has no `deleted_at`). Removing a user merely sets `memberships.status = 'removed'`. Attempting a naive `INSERT` when a previously removed user accepts a new invite crashes with `SQLITE_CONSTRAINT: UNIQUE constraint failed: memberships.org_id, memberships.user_id` (HTTP 500).
+**What I rejected:** Soft-deleting memberships with a `deleted_at` column, or hard-deleting membership rows on member removal. The schema is fixed and deliberate: keeping the membership row preserves historic audit foreign-key integrity and prevents phantom state transitions.
+**What would change my mind:** If the schema were revised to include a surrogate history table and allowed physical deletion of `memberships`, or changed the unique constraint to a partial index `WHERE status != 'removed'`.
+
+---
+
 ## Where this repo argues with itself
 
 ### 1. Suspension cannot both bump `perm_version` and answer `403` with an empty set

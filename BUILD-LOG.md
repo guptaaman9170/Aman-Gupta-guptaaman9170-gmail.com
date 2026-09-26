@@ -43,8 +43,15 @@ Note: this is the failure mode where a passing test is worse than a failing one.
 
 ## Phase 1 — token verification
 
-_What did you expect each failure mode to look like before you ran it? Which one behaved
-differently from your expectation, and what did that tell you?_
+**2026-09-26 · Implementing `verifyAccessToken` in `server/auth.js`**
+
+- **Expected vs Observed in Malformed Headers & Attack Vectors**:
+  - *Expectation*: I initially thought verifying the signature should be the very first step before touching any JSON payloads.
+  - *Observation*: To verify an HMAC signature `createHmac('sha256', secret).update(`${h}.${p}`).digest()`, we need the raw segments `h` and `p`. But we also must inspect `header` to defend against algorithm confusion (`alg: none`, `HS512`, `RS256`).
+  - *Failure mode discovery (A6)*: If we parse `header` naively with `JSON.parse(unb64(h))` without wrapping it in a try/catch, a client sending `not json` crashes with an uncaught `SyntaxError`, producing an internal server error (500) rather than `401 UNAUTHENTICATED`. Furthermore, `check-jwt.js:91` tests `forge('HS256', claims())` where the header JSON is a primitive string `"HS256"` rather than an object `{ alg: ... }`. Accessing `header.alg` directly on a non-object or array would either be `undefined` or behave unexpectedly. We added strict type and structure guards: `if (!header || typeof header !== 'object' || Array.isArray(header) || header.alg !== ALG || header.typ !== 'JWT') throw unauthenticated('unsupported token algorithm');`.
+  - *Constant-time comparison trap*: `crypto.timingSafeEqual(actual, expected)` throws a `RangeError` if the two buffers differ in byte length. When a truncated or empty signature is supplied (tested in `check-jwt.js:108` and `:109`), calling `timingSafeEqual` directly crashes. We must check `actual.length !== expected.length` beforehand and return `401 UNAUTHENTICATED`.
+  - *Half-open expiry boundary (B7)*: `check-jwt.js:116` tests `exp exactly now`. In standard UNIX timestamps, expiration is half-open: `[iat, exp)`. At the exact second `exp === now`, the token is already expired. So the condition is `claims.exp <= now`, not `<`.
+- **Validation**: Ran `node scripts/check-jwt.js`. All 43 assertions passed cleanly across round-trip preservation, malformed inputs, algorithm confusion defences, signature validation, expiration semantics, issuer/audience enforcement, and refresh-token rejection.
 
 ## Phase 2 — caller context and the resolution engine
 

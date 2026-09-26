@@ -11,42 +11,12 @@ Rules, from `DISCOVERY-BRIEF.md`:
 
 ---
 
-### <the decision, as a claim — not "permissions", but "the org-level view counts device-scoped grants">
+### Pin token algorithm to HS256 and reject header algorithm claims structurally
 
-**What I chose:**
-**Why:** _(evidence: test, log line, commit)_
-**What I rejected:** _(the plausible alternative, and the specific reason it fails)_
-**What would change my mind:**
-
-<!-- Copy the block above per decision. The two stubs below show the required shape and contain no
-     engineering content — replace or delete them. -->
-
----
-
-### Stub — the shape of a weak "Why"
-
-**What I chose:** the obvious thing.
-**Why:** it is what the brief says to do.
-**What I rejected:** nothing, the alternative seemed worse.
-**What would change my mind:** I do not know.
-
-_Reads as a memory of the document, not a model of the system. Scores nothing._
-
----
-
-### Stub — the shape of a strong "Why"
-
-**What I chose:** X.
-**Why:** I implemented Y first, because Y is the intuitive precedence rule. `node scripts/check-
-permissions.js` reported `<the actual reason string it reported>` on the case where the two grants
-disagree. That is only reachable if the two are evaluated in a different order than Y assumes.
-Moved to X in `<commit>` and the case passed. Logged in `BUILD-LOG.md` under Phase 2.
-**What I rejected:** Y, and also "resolve the narrower one last" — both fail the same case for the
-same reason.
-**What would change my mind:** a case where a narrower grant is expected to survive a broader
-refusal. I could not construct one, which is itself evidence for X.
-
-_Shows what you believed, what disproved it, and what you did next._
+**What I chose:** Strictly require `header.alg === 'HS256'` and `header.typ === 'JWT'` after safely decoding the header, rejecting any other algorithm or header shape with `401 UNAUTHENTICATED` before verifying the HMAC-SHA256 signature in constant time.
+**Why:** `scripts/check-jwt.js:95-102` explicitly tests algorithm confusion attacks (`alg: none` with empty signature, `alg: none` with trailing dot, `HS512` substitution, `RS256` substitution, and missing/invalid `alg`/`typ`). Trusting the token's header to dictate how the signature is verified allows algorithm confusion attacks (e.g. `none` algorithm bypass, or treating an HMAC secret as an RSA public key).
+**What I rejected:** Allowing a configurable algorithm whitelist or dynamically selecting a verification function based on `header.alg`. In a symmetric HMAC token architecture, accepting asymmetric algorithms like `RS256` creates an asymmetric-to-symmetric key confusion attack vector where an attacker signs a forged token using the server's public key as the HMAC secret.
+**What would change my mind:** A requirement to support asymmetric tokens from an external third-party Identity Provider (OIDC/OAuth2) with key rotation via JWKS endpoints.
 
 ---
 

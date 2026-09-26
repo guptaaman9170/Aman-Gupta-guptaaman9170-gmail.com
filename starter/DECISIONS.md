@@ -56,6 +56,15 @@ Rules, from `DISCOVERY-BRIEF.md`:
 
 ---
 
+### Grandfather active session authority and cascade only tenancy/account integrity events
+
+**What I chose:** Snapshot authorized role and active grant IDs in `sessions.authorized_by` when a session opens. Grant revocations or role modifications never terminate running sessions. Only structural tenancy events (member removal, suspension, and device transfer) cascade to active sessions via `endActiveSessions`.
+**Why:** PERMISSIONS.md §7.1 and D12 explicitly establish that sessions are grandfathered to prevent abrupt mid-operation disconnections when background permission edits occur. The session TTL (`expires_at`) prevents stale authority from persisting indefinitely. In contrast, suspension and removal represent complete severance of tenant access, which must terminate active connections immediately.
+**What I rejected:** Instant termination of all active sessions whenever any grant is revoked or role changed. This causes session flakiness and poor UX during routine permission tuning.
+**What would change my mind:** A strict Zero-Trust continuous authorization mandate requiring millisecond-level revocation of open network sockets and active streaming pipelines.
+
+---
+
 ## Where this repo argues with itself
 
 ### 1. Suspension cannot both bump `perm_version` and answer `403` with an empty set
@@ -69,6 +78,12 @@ Rules, from `DISCOVERY-BRIEF.md`:
 - **Statement B (`UI-INVENTORY.md §3`)**: Lists `decommission-device` among device-scoped action buttons rendered per row.
 - **The Conflict**: If decommission is checked org-wide, a user with an explicit deny on a single device could decommission that device anyway, or a device-scoped deny would be bypassed.
 - **My Decision**: I scoped `DELETE /v1/orgs/:org/devices/:id` to `assertCan(db, ctx, 'device:provision', device.id)`. An explicit deny on one specific device blocks decommissioning that device, while provisioning a brand-new device remains an org-level operation (since no device exists yet).
+
+### 3. `session:*` permissions are org-wide, not device-scoped
+- **Statement A (`PERMISSIONS.md D6`)**: *"Device permissions are always device-scoped. device:control means nothing without a device."* D6 explicitly names `device:*` as device-scoped.
+- **Statement B (`BRIEF.md §5.1`)**: Lists `GET /v1/orgs/{org}/sessions` requiring `session:view` and `DELETE /v1/sessions/{id}` requiring `session:terminate`.
+- **The Conflict**: Could `session:view` or `session:terminate` be treated as device-scoped permissions?
+- **My Decision**: I treat `session:*` permissions as strictly org-wide. Scoping session permissions to a device would allow a device-scoped grant to artificially widen or narrow org-wide session inspection and management capabilities, violating the separation between device capabilities and session lifecycle.
 
 ## Deliberately not built
 

@@ -109,8 +109,19 @@ Note: this is the failure mode where a passing test is worse than a failing one.
 
 ## Phase 5 — sessions
 
-_Two permissions, one device. What did you have to resolve, and in what order, to keep the two
-failure reasons distinguishable?_
+**2026-09-26 · Compound permissions, grandfathering, and concurrency invariants**
+
+- **The Compound Check Resolution Order (B2)**:
+  - *Observation*: Starting a session on a device requires two independent permissions: `session:start` (can the caller open a session?) and the mode permission (`device:view`, `device:control`, or `device:terminal`). Both must be evaluated on the *same* target device.
+  - *Order of evaluation*: In `assertCanStartSession`, we explicitly check `session:start` first. If missing, it throws `403 FORBIDDEN` (`reason: 'missing_permission'`). If allowed, we then check the mode permission on that device. If missing, it throws `403 FORBIDDEN` (`reason: 'missing_device_permission'`).
+  - *Why this order matters*: Testing `scripts/check-permissions.js:121-123` verified this distinction: for `usr_acme_viewer`, requesting a `control` session on `dev_lab_mac_01` returns `missing_device_permission` (viewer can start sessions on this device via grant, but lacks control permission), whereas requesting a `view` session on `dev_qa_android_01` returns `missing_permission` (viewer has no session:start grant on this device). Reversing the check would conflate global session capability with device-level mode entitlement.
+- **Grandfathering vs Cascade Invariants (B3)**:
+  - Authority snapshotting: When a session is initiated, `snapshotAuthority(db, { userId, orgId, deviceId })` captures the user's role and matching grant IDs into `sessions.authorized_by`.
+  - Revoking a grant or demoting a member's role does NOT terminate in-flight sessions; it only prevents starting new sessions. Expiry is guaranteed by `sessions.expires_at` based on `organizations.max_session_minutes`.
+  - Conversely, tenancy disruptions DO cascade immediately: member removal (`membership_removed`), member suspension (`user_suspended`), and device transfer (`device_transferred`) terminate active sessions synchronously via `endActiveSessions`.
+- **Relying on Database Indexes for Concurrency (B5)**:
+  - Exclusive sessions (modes `control` and `terminal`) must never run concurrently on the same device.
+  - Instead of a vulnerable check-then-act query (`SELECT count(*) ...` followed by `INSERT`), we rely on the partial unique index `one_exclusive_session_per_device` in `db/schema.sql`. Under concurrent requests, exactly one insert succeeds; the competing transaction encounters `SQLITE_CONSTRAINT`, which we catch in `routes/sessions.js` and convert to `409 DEVICE_BUSY`.
 
 ## Phase 6 — audit
 

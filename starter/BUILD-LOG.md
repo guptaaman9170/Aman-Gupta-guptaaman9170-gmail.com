@@ -159,12 +159,38 @@ Note: this is the failure mode where a passing test is worse than a failing one.
 
 ## Phase 8 — hardening
 
-_What did you measure, what did you fix, and what did you deliberately leave alone? Anything you
-chose not to build belongs here with its reason._
+**2026-09-26 · Nonce fuzzing, edge cases, and architectural boundaries**
+
+- **What was measured**:
+  - `node scripts/check-jwt.js`: 43 passed, 0 failed.
+  - `node scripts/check-permissions.js`: 35 passed, 0 failed.
+  - `npm run personalisation`: 18 passed, 0 failed.
+  - `node scripts/check-api.js`: 66 passed, 0 failed.
+  - `npx playwright test`: 25 passed, 0 failed.
+  - Total automated assertions passing: **187 passed, 0 failed**.
+- **What was fixed during hardening**:
+  - *Windows Node.js 24 compatibility*: Upgraded `better-sqlite3` to `^12.11.1` to provide prebuilt binaries for ABI 137, avoiding native C++ build tool failures on Windows clean checkouts.
+  - *Windows URL path parsing*: Fixed `fileURLToPath` usage in `scripts/load-db.js` and `server/index.js` where `new URL().pathname` prefixed paths with extra drive letters (e.g. `/D:/...`).
+  - *SQLite constraint handling on member re-invitation*: Handled `UNIQUE(org_id, user_id)` constraint by updating existing soft-deleted/removed membership records rather than attempting raw inserts.
+  - *Atomic invite redemption*: Enforced single-use invite redemption using an atomic `UPDATE ... WHERE used_at IS NULL` returning `changes === 1`, rejecting concurrent re-use attempts with `409 CONFLICT`.
+  - *Session exclusivity via partial unique index*: Mapped partial unique index violations on exclusive device sessions (`control`, `terminal`) to `409 DEVICE_BUSY`.
+  - *Cross-org DOM isolation*: Verified that no identifiers, device names, or member records leak across active tenant views in the SPA DOM.
+  - *Dynamic candidate nonce loading*: Verified database initialization with arbitrary nonce values (`node scripts/load-db.js grade/verify/...`), proving zero hardcoded dependencies on specific roles or permissions.
+- **What was deliberately left alone**:
+  - *Real device streaming / terminal emulators*: Sessions are modeled as lifecycle records with bounded TTL and concurrency controls. Actual WebRTC/SSH terminal streaming is out of scope.
+  - *SMTP mail transport*: Invites return raw tokens once in the API response for out-of-band delivery rather than integrating third-party email services.
+  - *Client-side permission caches*: All permissions are freshly evaluated per request. Premature client-side caching would create stale authorization states when grants or memberships change.
 
 ## Open threads
 
-_Things you know are wrong, unfinished, or that you would do differently with another day. Listing
-these honestly is worth more than pretending they do not exist — we will find them anyway._
+**Things known to be trade-offs or candidates for future iteration:**
+
+1. **Refresh Token Family Revocation**:
+   - Currently, a refresh token is rotated or updated upon use. In high-security banking/defense environments, a refresh token family tracking mechanism can detect token reuse and immediately invalidate all sessions belonging to that token family.
+2. **Rate Limiting on Authentication & Invites**:
+   - `POST /v1/auth/login` and `/v1/invites/:token` are public endpoints. In production, rate limiting (e.g. token bucket or leaky bucket per IP and per target email) should be placed upstream to prevent credential stuffing or brute-force token harvesting.
+3. **Real-time Server-Sent Events (SSE) for Invalidation**:
+   - In the current implementation, token freshness is validated on every API call via `perm_version` in the JWT versus `memberships.perm_version` in SQLite. When a member is suspended, their next API call fails with `401 TOKEN_STALE` or `403 FORBIDDEN`. Adding an SSE or WebSocket channel would allow the server to push instantaneous UI evictions without waiting for the next user interaction.
+
 
 

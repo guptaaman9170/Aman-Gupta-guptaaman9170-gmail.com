@@ -102,5 +102,18 @@ Rules, from `DISCOVERY-BRIEF.md`:
 
 ## Deliberately not built
 
-What you chose not to build, and the reason. A scope cut with a stated reason is a senior
-judgement. An unmentioned gap is a gap.
+1. **Real-time WebRTC / SSH Terminal Streaming**:
+   - *Reason*: RemoteOps is strictly an authorization, policy, and session management control plane. The underlying data plane (video streaming or shell multiplexing) belongs to dedicated media proxies that consume signed session tokens. Attempting to embed WebRTC or pseudoterminal daemons inside this node process would introduce fragile OS dependencies without improving permission enforcement.
+
+2. **Client-Side Permission Matrices and RBAC Evaluation in React**:
+   - *Reason*: Hardcoding role-to-permission lookups in the browser creates immediate security drift and fails when dynamic fixture nonces or custom roles are introduced. The React SPA is deliberately built as a pure presentation layer that renders affordances strictly if `entry?.effect === 'allow'` in the server's response.
+
+3. **Persistent Access Tokens in Web Storage (`localStorage` / `sessionStorage`)**:
+   - *Reason*: Persistent web storage is vulnerable to XSS exfiltration. We deliberately keep the short-lived access token in JavaScript runtime memory and restore sessions via an `httpOnly` refresh cookie. On page refresh, the SPA silently calls `/v1/auth/refresh`.
+
+4. **Third-Party SMTP Email Transport for Member Invites**:
+   - *Reason*: Integrating an external email delivery provider requires external network dependencies and credentials. The invite generation endpoint returns the unhashed token exactly once in the response body, allowing out-of-band delivery while hashing the stored token with SHA-256 to prevent database leaks.
+
+5. **Carve-outs or Scope Exceptions to Explicit Deny**:
+   - *Reason*: In hierarchical authorization systems, allowing a more specific `allow` (e.g. device-level) to override a broader `deny` (e.g. org-level) is a notorious source of privilege escalation. Explicit deny unconditionally trumps allow regardless of scope.
+

@@ -20,14 +20,31 @@ Rules, from `DISCOVERY-BRIEF.md`:
 
 ---
 
+### Explicit deny outranks allow unconditionally regardless of specificity (no carve-outs)
+
+**What I chose:** In `server/permissions.js`, collect all grants matching the query's scope and evaluate denies first. If any applicable grant specifies `effect: 'deny'`, the permission resolves to `deny` with `reason: 'explicit_deny'`, ignoring any `allow` grants or role baselines.
+**Why:** In `scripts/check-permissions.js:81-86`, grant `g_carve` grants an explicit device-scoped `allow device:terminal` on `dev_lab_win_01` for `usr_sam`, who possesses an org-wide `deny device:terminal`. The test explicitly asserts that the outcome remains `deny` (`device-scoped ALLOW does NOT carve out org-wide DENY`).
+**What I rejected:** Hierarchical precedence or "narrowest scope wins" (e.g. device-scoped grant overrides org-scoped grant). Implementing narrower-scope precedence fails `check-permissions.js:85` and violates invariant D1 ("an explicit deny always wins regardless of scope or specificity").
+**What would change my mind:** A requirement for multi-device delegation where org administrators need to blacklist a tool globally while whitelisting designated sandbox devices.
+
+---
+
+### Batched device permission resolution without caching
+
+**What I chose:** In `resolveDevices()`, resolve permissions for an entire list of devices by loading catalogue, membership, and baseline once and fetching all applicable grants in a single database query, performing per-row matching in memory.
+**Why:** Eliminates the N+1 query problem without introducing an in-memory cache or TTL. With SQLite's sub-millisecond query execution, loading grants once per request takes under 1ms. An in-memory cache keyed by `userId` alone would leak permissions across organizations for multi-org users (`AUTH-DATA-MODEL.md §4`), while any cache with a TTL would serve stale permissions after a revocation, violating D7.
+**What I rejected:** Adding an in-memory LRU cache or Redis cache with short TTL. A cache introduces cache invalidation complexity across multi-process deployments and risks serving revoked authority.
+**What would change my mind:** Profiling showing database read contention with tens of thousands of active devices per organization, at which point an in-memory cache strictly keyed by `(userId, orgId)` and invalidated by `memberships.perm_version` would be justified.
+
+---
+
 ## Where this repo argues with itself
 
-The documents contradict each other, or contradict the schema, in at least one place. Name each
-one you found. For each: quote both statements, say which you built against, and say why.
-
-Building against the written rule and arguing in writing is a **full-marks** answer. Silently
-working around it, or quietly picking one and saying nothing, scores zero on the section — we
-cannot tell the difference between a decision and an oversight.
+### 1. Suspension cannot both bump `perm_version` and answer `403` with an empty set
+- **Statement A (`AUTH-DATA-MODEL.md §1`)**: *"pv is the membership's permission version... It goes up whenever something authorization-relevant changes: a role change, a grant created or revoked, a suspension, a removal... A token whose pv no longer matches gets 401 TOKEN_STALE."*
+- **Statement B (`AUTH-DATA-MODEL.md §10` & `PERMISSIONS.md §7`)**: *"A suspended membership's token still verifies, but resolves to an empty set, so every permission question is refused with 403 suspended."*
+- **The Conflict**: If suspension increments `perm_version`, any request presenting the caller's live token will fail the `perm_version === claims.pv` freshness check in `context.js` and immediately return `401 TOKEN_STALE`. The request is aborted before reaching the resolution engine, meaning `403 FORBIDDEN` with `reason: "suspended"` is never returned to the caller.
+- **My Decision**: I preserved the database `perm_version` bump (which is correct and ensures that when the user is reinstated, old pre-suspension tokens remain permanently stale). In `server/context.js`, I check `if (membership.status !== 'suspended') assertFresh(claims, membership);`. This intentionally bypasses the staleness check for suspended memberships, allowing the request to proceed to route handlers where `assertCan` executes, the empty permission set is evaluated, and the server returns `403 FORBIDDEN` (`reason: "suspended"`).
 
 ## Deliberately not built
 

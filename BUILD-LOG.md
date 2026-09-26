@@ -55,8 +55,24 @@ Note: this is the failure mode where a passing test is worse than a failing one.
 
 ## Phase 2 — caller context and the resolution engine
 
-_This is where most people's first model is wrong. Write down the model you started with, the
-observation that broke it, and the model you moved to. Be specific about the observation._
+**2026-09-26 · Resolution algorithm, denial precedence, and structural isolation**
+
+- **The Wrong Precedence Model and the Observation That Broke It (B1, D1)**:
+  - *Initial intuition*: Coming from traditional ACL systems, my mental model expected hierarchical scope specificity: a specific device-scoped grant should override a general org-wide grant. For example, if an operator has an org-wide `deny device:terminal`, but the owner grants an explicit `allow device:terminal` on a specific staging machine (`dev_lab_win_01`), I expected the narrower grant to create a local carve-out.
+  - *The breaking observation*: `scripts/check-permissions.js:81-85` tests this exact case ("the discriminating case: org-wide deny + device-scoped allow"). It inserts grant `g_carve` (`allow device:terminal` on `dev_lab_win_01`) for `usr_sam`, who already has an org-wide deny on `device:terminal`. The test asserts: `check('device-scoped ALLOW does NOT carve out org-wide DENY', effect('usr_sam', A, 'device:terminal', 'dev_lab_win_01'), 'deny')`.
+  - *The corrected model*: Precedence is not about scope specificity. Deny outranks allow unconditionally. All matching grants (org-wide and device-scoped) are collected into a flat pool; if *any* applicable grant has `effect === 'deny'`, the final outcome is an explicit deny with `reason: 'explicit_deny'`. Allows are only evaluated if zero denies match.
+- **The Document Contradiction on Suspension (A4, D11)**:
+  - *Contradiction noticed*: `AUTH-DATA-MODEL.md §1` states that suspending a membership increments `perm_version`. But `AUTH-DATA-MODEL.md §10` and `PERMISSIONS.md §7` mandate that requests with a suspended membership's token must be refused with HTTP `403 FORBIDDEN` and `reason: "suspended"`. If `context.js` routinely runs `assertFresh(claims, membership)`, the version mismatch triggers first, returning `401 TOKEN_STALE`. The client would either enter a refresh loop or receive a 401 instead of a 403.
+  - *Resolution in code*: In `server/context.js`, we keep the version bump (it is required so that if the user is reinstated later, the old token remains stale), but we skip `assertFresh` *specifically when* `membership.status === 'suspended'`. The request proceeds to the resolution engine, where `gateReason('suspended')` returns `{ effect: 'deny', reason: 'suspended' }` across all permissions, and `assertCan` correctly throws `403 FORBIDDEN` with `reason: 'suspended'`.
+- **Structural Tenancy Isolation (B4)**:
+  - In `server/context.js`, cross-org access is not prevented by filtering queries after the fact. If the route URL has `params.org` and `params.org !== claims.org`, we throw `404 NOT_FOUND` immediately. The token's org claim is the only universe the caller can address.
+  - Similarly, joining `organizations o ON o.id = m.org_id` in `context.js` and checking `o.deleted_at` ensures that deleting an org immediately renders all tokens for that org invisible (`404 NOT_FOUND`).
+- **Dynamic Catalogue Reading & Personalisation Verification**:
+  - We read `permissions` and `role_permissions` from SQLite tables at query time rather than hardcoding the 5 roles and 19 permissions.
+  - Ran `npm run personalisation`: All 18 checks passed, successfully resolving the undocumented `reviewer` role (rank 35) and `device:reboot` permission from candidate nonce `starter-demo`.
+- **Suite results**:
+  - `node scripts/check-permissions.js`: **ALL PASS (35 passed, 0 failed)**.
+  - `npm run personalisation`: **ALL PASS (18 passed, 0 failed)**.
 
 ## Phase 3 — orgs, members, invites
 

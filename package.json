@@ -1,0 +1,15 @@
+{
+  "name": "remoteops-root",
+  "private": true,
+  "description": "Root runner for RemoteOps hackathon application",
+  "scripts": {
+    "dev": "npm run --prefix starter dev",
+    "start": "npm run --prefix starter start",
+    "build": "npm run --prefix starter build",
+    "db:reset": "npm run --prefix starter db:reset",
+    "db:load": "npm run --prefix starter db:load",
+    "test": "npm run --prefix starter test",
+    "personalisation": "npm run --prefix starter personalisation",
+    "fingerprint": "npm run --prefix starter fingerprint"
+  }
+}

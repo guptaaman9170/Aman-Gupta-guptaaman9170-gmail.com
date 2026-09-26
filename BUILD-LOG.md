@@ -92,8 +92,20 @@ Note: this is the failure mode where a passing test is worse than a failing one.
 
 ## Phase 4 — devices and grants
 
-_What happens at the boundary where two grants disagree, or where a grant's scope and the
-question's scope differ? Say what you predicted and what you got._
+**2026-09-26 · Scope boundaries, privilege laundering prevention, and database foreign keys**
+
+- **Scope Boundary in Privilege Laundering (A3, D9)**:
+  - *The question*: When `assertMayGrant(db, ctx, patterns, deviceId = null)` verifies that the caller has authority to confer a permission, what does "at that scope" mean when `deviceId` is null versus when a specific `deviceId` is provided?
+  - *The observation*: If a grant is org-wide (`deviceId === null`), the caller must hold `allow` at the org level without being blocked by an explicit deny anywhere that would taint global delegation. If the grant is device-scoped, the caller only needs `allow` for that specific device. For instance, an operator cannot grant `device:control` org-wide if they only possess a device-scoped allow on machine A.
+  - *Wildcards in laundering*: When an admin attempts to grant `*`, `expand('*', catalogue)` resolves to all 19 permissions. Because an admin lacks `org:delete`, `assertMayGrant` flags `org:delete` and throws `403 FORBIDDEN` (`missing_permission`).
+- **Row Exclusion vs Field Redaction**:
+  - In `GET /v1/orgs/:org/devices`: `device:list` authorizes the endpoint, but `device:view` governs row visibility. Devices where the caller has `device:view` denied (such as `dev_kiosk_lobby_01` for `viewer`) are filtered out completely, matching the invisible-not-forbidden design principle.
+- **Handling Database Constraint Exceptions as Client Validation**:
+  - `grant_permissions` references `permission_patterns(pattern)` via a foreign key. Inserting an invalid permission like `'device:teleport'` violates this foreign key.
+  - Rather than letting SQLite throw an uncaught error that surfaces as an HTTP 500, we catch the foreign key violation in `routes/devices.js` and map it to `400 VALIDATION` with `reason: 'unknown_permission'`.
+  - Duplicate permissions in a single grant request (e.g. `['device:view', 'device:view']`) are deduplicated with `[...new Set(permissions)]` before database insertion, preventing primary key collisions.
+- **Device Transfers Across Tenant Boundaries**:
+  - `POST /v1/orgs/:org/devices/:id/transfer`: Moving a device to another org requires `device:provision` in both the source and target orgs. When transferred, existing device grants are purged (they belonged to the source org's context) and all active sessions on that device are ended with `reason: 'device_transferred'`.
 
 ## Phase 5 — sessions
 

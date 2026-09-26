@@ -47,6 +47,15 @@ Rules, from `DISCOVERY-BRIEF.md`:
 
 ---
 
+### Privilege laundering prevention enforced at grant scope and expanded across wildcards
+
+**What I chose:** In `assertMayGrant(db, ctx, patterns, deviceId = null)`, expand each pattern against the catalogue and require the caller to hold `allow` for every expanded permission at that exact scope (`deviceId` or `null`) before allowing the grant creation to proceed.
+**Why:** D9 and Invariant 11 state that a user cannot confer authority they do not possess. If an admin (who lacks `org:delete`) creates a grant containing `*`, expanding `*` yields all 19 permissions; the engine detects `org:delete` is not allowed for the admin and throws `403 FORBIDDEN` (`missing_permission`). If an operator has a device-level grant for `device:control` on device A, passing `deviceId = null` evaluates their org-level authority and prevents them from granting `device:control` org-wide.
+**What I rejected:** Evaluating laundering only on literal string equality without expanding wildcards. If wildcards were not expanded, an admin could grant `*` or `org:*` to elevate another user to `org:delete` authority, creating a privilege escalation hole.
+**What would change my mind:** A hierarchical delegation system where certain super-roles are granted delegation powers for permissions they do not actively hold.
+
+---
+
 ## Where this repo argues with itself
 
 ### 1. Suspension cannot both bump `perm_version` and answer `403` with an empty set
@@ -54,6 +63,12 @@ Rules, from `DISCOVERY-BRIEF.md`:
 - **Statement B (`AUTH-DATA-MODEL.md §10` & `PERMISSIONS.md §7`)**: *"A suspended membership's token still verifies, but resolves to an empty set, so every permission question is refused with 403 suspended."*
 - **The Conflict**: If suspension increments `perm_version`, any request presenting the caller's live token will fail the `perm_version === claims.pv` freshness check in `context.js` and immediately return `401 TOKEN_STALE`. The request is aborted before reaching the resolution engine, meaning `403 FORBIDDEN` with `reason: "suspended"` is never returned to the caller.
 - **My Decision**: I preserved the database `perm_version` bump (which is correct and ensures that when the user is reinstated, old pre-suspension tokens remain permanently stale). In `server/context.js`, I check `if (membership.status !== 'suspended') assertFresh(claims, membership);`. This intentionally bypasses the staleness check for suspended memberships, allowing the request to proceed to route handlers where `assertCan` executes, the empty permission set is evaluated, and the server returns `403 FORBIDDEN` (`reason: "suspended"`).
+
+### 2. `device:provision` on decommission is scoped to the device row, not org-level
+- **Statement A (`BRIEF.md §5.1`)**: The endpoint table lists `DELETE /v1/orgs/{org}/devices/{id}` requiring `device:provision` without mentioning device scope.
+- **Statement B (`UI-INVENTORY.md §3`)**: Lists `decommission-device` among device-scoped action buttons rendered per row.
+- **The Conflict**: If decommission is checked org-wide, a user with an explicit deny on a single device could decommission that device anyway, or a device-scoped deny would be bypassed.
+- **My Decision**: I scoped `DELETE /v1/orgs/:org/devices/:id` to `assertCan(db, ctx, 'device:provision', device.id)`. An explicit deny on one specific device blocks decommissioning that device, while provisioning a brand-new device remains an org-level operation (since no device exists yet).
 
 ## Deliberately not built
 

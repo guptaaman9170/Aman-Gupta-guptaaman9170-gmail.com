@@ -65,6 +65,15 @@ Rules, from `DISCOVERY-BRIEF.md`:
 
 ---
 
+### Audit denied mutations and failed sign-ins while excluding idempotent read queries
+
+**What I chose:** In `server/audit.js`, use `auditDenials()` to record denied mutations (such as role modifications, suspensions, grant creations, and session starts) and log failed sign-in attempts for recognized accounts, while deliberately avoiding logging denied `GET` read queries.
+**Why:** Invariant 9 asks the audit log to capture denied attempts. However, recording every denied read (such as when the UI evaluates absent navigation items or checks effective permissions) would rapidly fill `audit_events` with hundreds of ambient denial rows, obscuring genuine security-critical administrative actions. Restricting denial auditing to state-altering mutations preserves clear signal on who attempted unauthorized administrative changes.
+**What I rejected:** Auditing all denied requests including `GET` queries, or auditing successful actions in both the outer wrapper and inner handler. Double-logging creates duplicate audit records, while read-denial logging dilutes the audit trail.
+**What would change my mind:** A strict forensic compliance framework (e.g. FedRAMP High / Common Criteria) mandating an immutable record of every unauthorized data access attempt regardless of HTTP verb.
+
+---
+
 ## Where this repo argues with itself
 
 ### 1. Suspension cannot both bump `perm_version` and answer `403` with an empty set
@@ -84,6 +93,12 @@ Rules, from `DISCOVERY-BRIEF.md`:
 - **Statement B (`BRIEF.md §5.1`)**: Lists `GET /v1/orgs/{org}/sessions` requiring `session:view` and `DELETE /v1/sessions/{id}` requiring `session:terminate`.
 - **The Conflict**: Could `session:view` or `session:terminate` be treated as device-scoped permissions?
 - **My Decision**: I treat `session:*` permissions as strictly org-wide. Scoping session permissions to a device would allow a device-scoped grant to artificially widen or narrow org-wide session inspection and management capabilities, violating the separation between device capabilities and session lifecycle.
+
+### 4. Soft-deleted resources must be invisible (404), never forbidden (403)
+- **Statement A (`PERMISSIONS.md §5`)**: Lists soft-deleted resources with non-existent ones under `404 NOT_FOUND` to prevent information leaks confirming the existence of deleted tenant resources.
+- **Statement B (`BRIEF.md §5.1`)**: States that requests to resources in an organization require valid authorization, which could lead an implementer to check permissions before checking deletion status.
+- **The Conflict**: Checking permissions before verifying `deleted_at IS NULL` could return `403 FORBIDDEN` for an unauthorized user accessing a deleted resource, leaking that the resource once existed.
+- **My Decision**: In `context.js` and all route handlers, I join `organizations` and `devices` filtering `deleted_at IS NULL` or checking `deleted_at` first, returning `404 NOT_FOUND` before any permission check is evaluated. Invisible-not-forbidden is enforced uniformly.
 
 ## Deliberately not built
 

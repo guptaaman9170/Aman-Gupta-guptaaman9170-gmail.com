@@ -125,7 +125,21 @@ Note: this is the failure mode where a passing test is worse than a failing one.
 
 ## Phase 6 — audit
 
-_What did you decide counts as an auditable event, and what pushed you to that line?_
+**2026-09-26 · Audit boundary, mutation auditing, and default-org ordering**
+
+- **What Counts as an Auditable Event (Invariant 9)**:
+  - *The decision*: Invariant 9 asks the audit log to record denied attempts as well as successes. However, logging every denied `GET` request (e.g. evaluating permissions for absent UI elements or polling endpoints) would flood the `audit_events` table with ambient read noise and drown out security signals.
+  - *The boundary*: We audit security-relevant state mutations:
+    1. Sign-in attempts: successful logins and failed sign-in attempts (attributed to the user's primary org if the user exists, noting that unknown emails cannot be attributed to an org because `audit_events.org_id` is `NOT NULL`).
+    2. Gated state changes: org creations, updates, deletes; role updates; member suspensions and reinstatements; member removals and departures; invite creations and revokes; invite acceptances; device provisions, updates, decommissions, and transfers; grant creations and revocations; session starts, stops, and terminations.
+  - *Single-row invariant*: Each successful route handler writes its own audit record inside the database transaction performing the mutation. `auditDenials()` catches `FORBIDDEN` exceptions and records denials before rethrowing. This guarantees that successful mutations produce exactly one row, rather than being double-counted by both an outer wrapper and the inner handler.
+- **Ungated Endpoints and Engine Bypass (A5)**:
+  - We catalogued gated versus ungated endpoints: `POST /v1/auth/login`, `GET /v1/invites/:token`, and `POST /v1/invites/:token/accept` are entirely ungated and public. They bypass `server/permissions.js` resolution completely. A user whose membership status is `suspended` receives an empty set on gated routes, but can still interact with public invite redemption or attempt authentication.
+- **Default Organization Ordering (A8)**:
+  - In `POST /v1/auth/login` and `POST /v1/auth/refresh`, when no `orgId` is provided in the request body, the server selects the user's first active membership ordered alphabetically by organization name (`ORDER BY o.name ASC`).
+  - This observation explains why `check-api.js:80`, `:88`, and `:142` expect users with multiple memberships (Dana, Sam) to default into "Acme Robotics" rather than "Globex Industries" ("A" comes before "G").
+- **Verification**:
+  - Ran `node scripts/check-api.js`: **ALL PASS (66 passed, 0 failed)** across auth, structural isolation, role bundles, row inclusion, compound sessions, grandfathering, suspension cascade, rank modification, invites, and audit pagination.
 
 ## Phase 7 — the console
 
